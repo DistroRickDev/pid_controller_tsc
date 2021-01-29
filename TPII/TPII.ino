@@ -1,123 +1,76 @@
-/********************************************************
-   PID Basic Example
-   Reading analog input 0 to control analog PWM output 3
- ********************************************************/
-#include <PID_v1.h>
+#include <Adafruit_MPU6050.h>
+#include <Adafruit_Sensor.h>
 #include <Wire.h>
+#include <PID_v1.h>
 
-//Pin definition
-#define PWM 3
-#define DIR 2
+#define PWM 2
+#define DIR 3
 
-//Some constants
-#define MPU_ADDR 0x68
+Adafruit_MPU6050 mpu;
 
-
-int16_t MIN_VAL = 265;
-int16_t MAX_VAL = 402;
-int16_t accel_x, accel_y, accel_z, temp, gyro_x, gyro_y, gyro_z;
-
-static volatile uint8_t dir = 0;
-
-double x;
-double y;
-double z;
-
-int vel = 0;
+int current_millis, last_millis, time_period;
 
 //Define Variables we'll be connecting to
 double Setpoint, Input, Output;
 
 //Specify the links and initial tuning parameters
-double Kp = 15 , Ki = 0 , Kd = 0;             // modify for optimal performance
+double Kp = .3 , Ki = 0 , Kd = 0;             // modify for optimal performance
 
 PID myPID(&Input, &Output, &Setpoint, Kp, Ki, Kd, DIRECT);
 
-int current_t = 0;
-int last_t = 0;
-int t_limit = 200; //200 ms
-
-void setup()
-{
-  Setpoint = 120;
-  //init serial protocol
+void setup() {
   Serial.begin(115200);
-
-  Serial.println("INIT STARTED");
-
-  //init I2C
-  Wire.begin();
-  Wire.beginTransmission(MPU_ADDR);
-  Wire.write(0x6B);
-  Wire.write(0);
-  Wire.endTransmission(true);
 
   //defining pin mode
   pinMode(PWM, OUTPUT);
   pinMode(DIR, OUTPUT);
 
-  digitalWrite(DIR, HIGH);
-  //turn the PID on
+  if (!mpu.begin()) {
+    Serial.println("Failed to find MPU6050 chip");
+    while (1) {
+      delay(10);
+    }
+  }
+  
+  setUpSensor();
+  
+  time_period = 250;
+  
+  Setpoint = 0;
   myPID.SetMode(AUTOMATIC);
   myPID.SetSampleTime(1);  // refresh rate of PID controller
-  myPID.SetOutputLimits(-100, 100); // this is the MAX PWM value to move motor, here change in value reflect change in speed of motor.
-
-  Serial.println("INIT SUCCESSFUL");
-  current_t = millis();
+  myPID.SetOutputLimits(-255, 255); // this is the MAX PWM value to move motor, here change in value reflect change in speed of motor.
+  delay(1000);
 }
 
-
-
-void loop()
-{
-  current_t = millis();
-  if (current_t - last_t >= t_limit) {
-    Setpoint = 50;
-    ang_vel();
-    Input = vel;
+void loop() {
+  current_millis = millis();
+  if (current_millis - last_millis >= time_period)
+  {
+    Setpoint = 0;
+    sensors_event_t a, g, temp;
+    mpu.getEvent(&a, &g, &temp);
+    
+    Input = a.acceleration.y * 57.29578;
+    Serial.print("Y: ");Serial.println(Input);
     myPID.Compute();  // calculate new output
     Serial.print("OUTPUT:"); Serial.println(Output);
-    pwmOut(Output / 1.1);
-    last_t = current_t;
+    pwmOut(Output);
+    last_millis = current_millis;
   }
-
 }
 
-void read_x_angle()
-{
-  //Lets add 10
-  Wire.beginTransmission(MPU_ADDR);
-  Wire.write(0x3B);
-  Wire.endTransmission(false);
-  Wire.requestFrom(MPU_ADDR, 14, true);
-  accel_x = Wire.read() << 8 | Wire.read();
-  accel_y = Wire.read() << 8 | Wire.read();
-  accel_z = Wire.read() << 8 | Wire.read();
-  int xAng = map(accel_x, MIN_VAL, MAX_VAL, -90, 90);
-  int yAng = map(accel_y, MIN_VAL, MAX_VAL, -90, 90);
-  int zAng = map(accel_z, MIN_VAL, MAX_VAL, -90, 90);
-
-  x = RAD_TO_DEG * (atan2(-yAng, -zAng) + PI);
-  Serial.print("X:");
-  Serial.println(x);  
-}
-
-void ang_vel(){
-  int b = millis();
-  read_x_angle();
-  vel = (x-0)/ (millis() - b);
-  Serial.print("VEL:");
-  Serial.println(vel);  
-}
 
 void pwmOut(int out) {
-  if (out > 0) {                         // if REV > encoderValue motor move in forward direction.
+  if (out > 0) {
+    forward();// if REV > encoderValue motor move in forward direction.
     analogWrite(PWM, out);         // Enabling motor enable pin to reach the desire angle
-    forward();                           // calling motor to move forward
+    // calling motor to move forward
   }
   else {
-    analogWrite(PWM, abs(out));          // if REV < encoderValue motor move in forward direction.
     reverse();                            // calling motor to move reverse
+    analogWrite(PWM, abs(out));          // if REV < encoderValue motor move in forward direction.
+
   }
 }
 
@@ -129,4 +82,66 @@ void forward () {
 void reverse () {
   digitalWrite(DIR, LOW);
   //digitalWrite(DIR , HIGH);
+}
+
+void setUpSensor()
+{
+  mpu.setAccelerometerRange(MPU6050_RANGE_8_G);
+  Serial.print("Accelerometer range set to: ");
+  switch (mpu.getAccelerometerRange()) {
+  case MPU6050_RANGE_2_G:
+    Serial.println("+-2G");
+    break;
+  case MPU6050_RANGE_4_G:
+    Serial.println("+-4G");
+    break;
+  case MPU6050_RANGE_8_G:
+    Serial.println("+-8G");
+    break;
+  case MPU6050_RANGE_16_G:
+    Serial.println("+-16G");
+    break;
+  }
+  mpu.setGyroRange(MPU6050_RANGE_500_DEG);
+  Serial.print("Gyro range set to: ");
+  switch (mpu.getGyroRange()) {
+  case MPU6050_RANGE_250_DEG:
+    Serial.println("+- 250 deg/s");
+    break;
+  case MPU6050_RANGE_500_DEG:
+    Serial.println("+- 500 deg/s");
+    break;
+  case MPU6050_RANGE_1000_DEG:
+    Serial.println("+- 1000 deg/s");
+    break;
+  case MPU6050_RANGE_2000_DEG:
+    Serial.println("+- 2000 deg/s");
+    break;
+  }
+
+  mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
+  Serial.print("Filter bandwidth set to: ");
+  switch (mpu.getFilterBandwidth()) {
+  case MPU6050_BAND_260_HZ:
+    Serial.println("260 Hz");
+    break;
+  case MPU6050_BAND_184_HZ:
+    Serial.println("184 Hz");
+    break;
+  case MPU6050_BAND_94_HZ:
+    Serial.println("94 Hz");
+    break;
+  case MPU6050_BAND_44_HZ:
+    Serial.println("44 Hz");
+    break;
+  case MPU6050_BAND_21_HZ:
+    Serial.println("21 Hz");
+    break;
+  case MPU6050_BAND_10_HZ:
+    Serial.println("10 Hz");
+    break;
+  case MPU6050_BAND_5_HZ:
+    Serial.println("5 Hz");
+    break;
+  }
 }
